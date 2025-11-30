@@ -1,0 +1,55 @@
+name: KLPBBS Auto Sign
+
+on:
+  workflow_dispatch: # 允许手动触发
+  schedule:
+    # 北京时间 7:00 对应 UTC 时间 23:00 (前一天)
+    - cron: '0 23 * * *'
+
+jobs:
+  sign_in:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    # --- 核心修改：配置缓存 ---
+    # 这步会尝试恢复上次的 cookies.json
+    # 如果运行成功，它会将新的 cookies.json 保存下来供下次使用
+    - name: Restore/Save Cookie Cache
+      uses: actions/cache@v3
+      with:
+        path: cookies.json
+        # 解释：使用 run_id 确保每次的 key 都不一样，强制保存新缓存
+        key: klpbbs-cookie-${{ github.run_id }}
+        # 解释：如果找不到上面的 key，就找最近一次以 klpbbs-cookie- 开头的缓存
+        restore-keys: |
+          klpbbs-cookie-
+
+    - name: Install dependencies
+      run: |
+        pip install requests cloudscraper
+
+    - name: Run Sign Script
+      env:
+        KLP_USERNAME: ${{ secrets.KLP_USERNAME }}
+        KLP_PASSWORD: ${{ secrets.KLP_PASSWORD }}
+      run: |
+        python main.py
+
+    # --- 可选：调试用 ---
+    # 这一步会把 cookies.json 打包，你可以在 Actions 运行详情页下载查看
+    # 确认文件是否真的生成了
+    - name: Upload Cookie for Debug (Optional)
+      if: always() # 无论成功失败都执行
+      uses: actions/upload-artifact@v4
+      with:
+        name: generated-cookie
+        path: cookies.json
+        if-no-files-found: warn
