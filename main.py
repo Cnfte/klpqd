@@ -1,160 +1,113 @@
-import requests
-import cloudscraper
 import os
-import json
-import re
 import time
-from datetime import datetime
-import xml.etree.ElementTree as ET
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
-class KlpbbsSign:
-    def __init__(self):
-        self.url = "https://www.klpbbs.com"
-        self.cookie_file = "cookies.json"
-        self.username = os.environ.get("KLP_USERNAME")
-        self.password = os.environ.get("KLP_PASSWORD")
+# 也就是你扒出来的那个签到插件链接，去掉具体的 formhash，只保留前缀
+SIGN_URL_BASE = "https://www.klpbbs.com/plugin.php?id=k_misign:sign&operation=qiandao&format=text"
+
+def run_bot():
+    username = os.environ.get("KLP_USERNAME")
+    password = os.environ.get("KLP_PASSWORD")
+
+    if not username or not password:
+        print("错误：未设置环境变量 KLP_USERNAME 或 KLP_PASSWORD")
+        return
+
+    # --- 配置 Chrome 浏览器 ---
+    chrome_options = Options()
+    chrome_options.add_argument("--headless") # 无头模式，无界面运行
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--window-size=1920,1080")
+    # 模拟真实 User-Agent，防止被轻易拦截
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+
+    driver = webdriver.Chrome(options=chrome_options)
+    
+    try:
+        print("[-] 1. 打开论坛首页...")
+        driver.get("https://www.klpbbs.com/member.php?mod=logging&action=login")
         
-        self.scraper = cloudscraper.create_scraper()
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-            "Referer": "https://www.klpbbs.com/forum.php",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        }
+        # 等待用户名输入框加载
+        wait = WebDriverWait(driver, 15)
+        user_input = wait.until(EC.presence_of_element_located((By.NAME, "username")))
+        
+        print("[-] 2. 输入账号密码...")
+        user_input.send_keys(username)
+        pass_input = driver.find_element(By.NAME, "password")
+        pass_input.send_keys(password)
+        
+        # 点击登录按钮
+        submit_btn = driver.find_element(By.NAME, "loginsubmit")
+        # 有时候按钮需要用 JS 点击才稳
+        driver.execute_script("arguments[0].click();", submit_btn)
+        
+        print("[-] 3. 等待登录跳转...")
+        time.sleep(5) # 强制等待页面刷新
+        
+        # 截图验证登录状态 (调试用)
+        driver.save_screenshot("debug_login.png")
 
-    def load_cookies(self):
-        """加载本地Cookie"""
-        if os.path.exists(self.cookie_file):
-            try:
-                with open(self.cookie_file, 'r') as f:
-                    cookies = json.load(f)
-                    self.scraper.cookies.update(cookies)
-                print("[-] 已加载本地 Cookie")
-                return True
-            except:
-                pass
-        return False
+        # 检查是否登录成功 (查看页面有没有用户名)
+        if username not in driver.page_source and "注销" not in driver.page_source:
+            print("[!] 登录可能失败，请查看 debug_login.png")
+            # 这里不退出，尝试强行访问签到链接试试
+        else:
+            print("[-] 登录成功！")
 
-    def save_cookies(self):
-        """保存Cookie"""
+        # --- 获取 Formhash (Selenium 会自动处理) ---
+        # 只要登录了，浏览器会自动携带 Cookie，我们直接访问签到 API 即可
+        # 这一步我们先访问首页，让浏览器解析出 formhash
+        formhash = "unknown"
         try:
-            with open(self.cookie_file, 'w') as f:
-                json.dump(self.scraper.cookies.get_dict(), f)
+            # 从页面源码提取 formhash，selenium 不需要复杂的正则，直接执行 JS 也可以
+            # 但最简单的方法是直接访问签到页，浏览器会自动把 session 带过去
+            pass 
         except:
             pass
 
-    def get_formhash(self, text):
-        """正则提取 formhash"""
-        match = re.search(r'formhash=([a-zA-Z0-9]+)', text)
-        if match: return match.group(1)
-        match_input = re.search(r'name="formhash" value="([a-zA-Z0-9]+)"', text)
-        if match_input: return match_input.group(1)
-        return None
-
-    def login(self):
-        """登录逻辑"""
-        print("[-] 正在尝试登录...")
-        login_page_url = f"{self.url}/member.php?mod=logging&action=login&infloat=yes&handlekey=login&inajax=1&ajaxtarget=fwin_content_login"
+        print("[-] 4. 访问签到接口...")
+        # 我们这里做一个骚操作：直接访问签到插件的界面，找到签到按钮（或者直接请求API）
+        # 由于我们不知道实时的 formhash，我们通过访问插件主页来签到
+        driver.get("https://www.klpbbs.com/plugin.php?id=k_misign:sign")
+        time.sleep(3)
+        driver.save_screenshot("debug_sign_page.png")
         
+        # 尝试点击签到按钮 (通常 id 是 JD_sign 或类似的，或者查找链接)
+        # 这里使用最通用的方法：查找页面上包含 "签到" 的链接或按钮
         try:
-            # 1. 获取登录页 formhash
-            res = self.scraper.get(login_page_url, headers=self.headers)
-            formhash = self.get_formhash(res.text)
-            if not formhash:
-                print("[!] 无法获取登录 Formhash，可能被防火墙拦截")
-                return False
-
-            # 2. 发送登录请求
-            data = {
-                "formhash": formhash,
-                "referer": f"{self.url}/portal.php",
-                "username": self.username,
-                "password": self.password,
-                "questionid": "0",
-                "answer": "",
-                "loginsubmit": "true"
-            }
-            post_url = f"{self.url}/member.php?mod=logging&action=login&loginsubmit=yes&infloat=yes&lssubmit=yes&inajax=1"
-            resp = self.scraper.post(post_url, data=data, headers=self.headers)
-            
-            if "succeed" in resp.text or "欢迎" in resp.text:
-                print("[-] 登录成功")
-                self.save_cookies()
-                return True
-            else:
-                print(f"[!] 登录失败: {resp.text[:100]}")
-                return False
+            # 寻找 href 中包含 operation=qiandao 的链接
+            sign_link = driver.find_element(By.XPATH, "//a[contains(@href, 'operation=qiandao')]")
+            print(f"[-] 找到签到按钮链接: {sign_link.get_attribute('href')}")
+            sign_link.click()
+            print("[-] 点击了签到按钮")
+            time.sleep(3)
+            driver.save_screenshot("debug_sign_result.png")
+            print("[√] 签到流程执行完毕，请查看截图确认结果")
         except Exception as e:
-            print(f"[!] 登录过程异常: {e}")
-            return False
-
-    def check_login(self):
-        """验证Cookie是否有效"""
-        try:
-            res = self.scraper.get(f"{self.url}/home.php?mod=spacecp&ac=credit", headers=self.headers)
-            if self.username in res.text or "注销" in res.text:
-                return True, res.text
-            return False, res.text
-        except:
-            return False, ""
-
-    def run_sign(self):
-        # 1. 初始化登录
-        self.load_cookies()
-        is_login, html_text = self.check_login()
-        
-        if not is_login:
-            if not self.login():
-                return
-            # 登录后刷新一下页面获取最新的 formhash
-            _, html_text = self.check_login()
-
-        print("[-] 准备执行签到...")
-        
-        # 2. 获取 Formhash (核心步骤)
-        # 我们需要从任意一个已登录的页面提取当前的 formhash
-        formhash = self.get_formhash(html_text)
-        
-        if not formhash:
-            # 如果从积分页没拿到，尝试去签到插件主页拿
-            print("[-] 尝试从插件主页获取 Formhash...")
-            plugin_page = self.scraper.get(f"{self.url}/plugin.php?id=k_misign:sign", headers=self.headers)
-            formhash = self.get_formhash(plugin_page.text)
-        
-        if not formhash:
-            print("[!] 严重错误: 无法获取 Formhash，无法构建签到链接")
-            return
-
-        print(f"[-] 获取到 Formhash: {formhash}")
-
-        # 3. 构建 API 请求 (使用你抓到的接口)
-        # 格式: plugin.php?id=k_misign:sign&operation=qiandao&format=text&formhash=xxxx
-        sign_url = f"{self.url}/plugin.php?id=k_misign:sign&operation=qiandao&format=text&formhash={formhash}"
-        
-        try:
-            # k_misign 插件通常接受 GET 请求
-            res = self.scraper.get(sign_url, headers=self.headers)
-            content = res.text
-
-            print(f"[-] 服务器返回: {content}")
-
-            # 4. 结果判定
-            # 返回值通常是 XML 格式，例如:
-            # <root><![CDATA[恭喜你签到成功!....]]></root>
-            # 或者纯文本
-            
-            if "签到成功" in content or "succeed" in content:
-                print("[√] 签到成功！")
-            elif "已签到" in content or "来过" in content:
-                print("[√] 今天已经签到过了")
-            elif "需要先登录" in content:
-                print("[!] Cookie 失效，需要重新登录")
+            print(f"[!] 未找到显式签到按钮，尝试直接访问 API (尝试自动提取 formhash)")
+            # 备选方案：正则从当前页面源代码里找 formhash
+            import re
+            match = re.search(r'formhash=([a-zA-Z0-9]+)', driver.page_source)
+            if match:
+                current_formhash = match.group(1)
+                print(f"[-] 提取到的 formhash: {current_formhash}")
+                final_url = f"{SIGN_URL_BASE}&formhash={current_formhash}"
+                driver.get(final_url)
+                time.sleep(2)
+                print(f"[-] API 返回内容: {driver.find_element(By.TAG_NAME, 'body').text}")
             else:
-                print("[?] 未知结果，请手动检查上面的服务器返回内容")
+                print("[X] 无法提取 Formhash，签到失败")
 
-        except Exception as e:
-            print(f"[!] 签到请求异常: {e}")
+    except Exception as e:
+        print(f"[X] 发生异常: {e}")
+        driver.save_screenshot("debug_error.png")
+    finally:
+        driver.quit()
 
 if __name__ == "__main__":
-    print(f"--- 任务开始: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---")
-    bot = KlpbbsSign()
-    bot.run_sign()
+    run_bot()
