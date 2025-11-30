@@ -1,4 +1,4 @@
-name: KLPBBS Auto Sign (Selenium)
+name: KLPBBS Auto Sign (DrissionPage + Xvfb)
 
 on:
   workflow_dispatch:
@@ -18,26 +18,26 @@ jobs:
       with:
         python-version: '3.9'
 
-    # 安装 Chrome 和 Chromedriver (GitHub Actions Ubuntu 镜像通常自带 Chrome，但安装一下更保险)
-    - name: Install Chrome
+    # --- 核心步骤：安装 Chrome 和 Xvfb (虚拟显示器) ---
+    - name: Install System Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
+        sudo apt-get install -y google-chrome-stable xvfb
 
-    - name: Install dependencies
+    - name: Install Python Dependencies
       run: |
         pip install -r requirements.txt
 
-    - name: Run Sign Script
+    # --- 核心步骤：在虚拟屏幕中运行脚本 ---
+    - name: Run Sign Script with Xvfb
       env:
         KLP_USERNAME: ${{ secrets.KLP_USERNAME }}
         KLP_PASSWORD: ${{ secrets.KLP_PASSWORD }}
       run: |
-        python main.py
+        # xvfb-run 会创建一个虚拟屏幕，-a 表示自动选择端口
+        # 这样浏览器就会以为自己是在有桌面的电脑上运行，而不是无头模式
+        xvfb-run -a python main.py
 
-    # --- 关键步骤：上传截图 ---
-    # 这一步配置了 if: always()，意味着哪怕上面的 python 跑挂了，这一步也会执行
-    # 你可以在 Actions 运行结果页面的 "Artifacts" 区域下载这些图片
     - name: Upload Debug Screenshots
       if: always() 
       uses: actions/upload-artifact@v4
